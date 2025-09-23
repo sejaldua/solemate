@@ -4,6 +4,7 @@ import re
 import json
 import os
 from pprint import pprint
+import time
 
 CACHE_FILE = "shoes.json"
 
@@ -27,11 +28,11 @@ def fetch_page(url):
     resp.raise_for_status()
     return resp.text
 
-def parse_runrepeat_shoe(url):
+def parse_runrepeat_shoe(name, url):
     html = fetch_page(url)
     soup = BeautifulSoup(html, "html.parser")
 
-    data = {"url": url}
+    data = {"url": url, "name": name}
 
     # ---------------- Title ----------------
     title_tag = soup.find("h1")
@@ -97,32 +98,34 @@ def parse_runrepeat_shoe(url):
     data["lab_results"] = lab_data
 
     # ---------------- Brand Specs ----------------
-    specs = {}
-    specs_section = None
-    for h in soup.find_all(["h2","h3"]):
-        if "Specs (brand)" in h.get_text() or "Specs" in h.get_text():
-            specs_section = h
-            break
+    time.sleep(1)
 
-    if specs_section:
-        for sibling in specs_section.find_next_siblings():
-            if sibling.name and sibling.name.startswith("h2"):
-                break
-            if sibling.name == "table":
-                for tr in sibling.find_all("tr"):
-                    th = tr.find("th")
-                    td = tr.find("td")
-                    if th and td:
-                        specs[th.get_text(" ", strip=True)] = td.get_text(" ", strip=True)
+    def get_span_text(class_name):
+        """Return stripped text for a span with given class, or None if not found."""
+        tag = soup.find("span", class_=class_name)
+        return tag.get_text(strip=True) if tag else None
 
-    data["brand_specs"] = specs
+    data["brand"] = get_span_text("brand-value")
+    data['terrain'] = get_span_text("terrain-value")
+    data['arch_support'] = get_span_text("arch-support-value")
+    data['material'] = get_span_text("material-value")
+    data['strike-pattern'] = get_span_text("strike-pattern-value")
+    data['pace'] = get_span_text("pace-value")
+    data['pronation'] = get_span_text("pronation-value")
+    data['use'] = get_span_text("use-value")
+    data['features'] = get_span_text("features-value")
 
     # ---------------- First Main Image ----------------
     first_img = None
     # Usually main shoe image has role="img" or alt with shoe name
-    img_tag = soup.find_all("img", {"alt": re.compile(r".*", re.I)})[1]
-    if img_tag and img_tag.get("src"):
-        first_img = img_tag["src"]
+    img_tags = soup.find_all("img", {"alt": re.compile(r".*", re.I)})
+    if img_tags:
+        # prefer the first image that has a src
+        for img_tag in img_tags:
+            src = img_tag.get("src") or img_tag.get("data-src")
+            if src:
+                first_img = src
+                break
 
     data["main_image"] = first_img
 
@@ -134,25 +137,26 @@ if __name__ == "__main__":
     # get urls for all the shoes
     catalog_url = "https://runrepeat.com/catalog/running-shoes"
     suffixes = ["", *[f"?page={i}" for i in range(2, 21)]]
-    urls = []
+    urls, names = [], []
     for suffix in suffixes:
         shoe_catalog_url = f"{catalog_url}{suffix}"
         print(shoe_catalog_url)
         html = fetch_page(shoe_catalog_url)
         soup = BeautifulSoup(html, "html.parser")
         for shoe in soup.find_all('div', class_="product-name"):
-            urls.append(f"https://runrepeat.com/{shoe.find('a').get('href')}")
+            names.append(shoe.get_text(strip=True))
+            urls.append(f"https://runrepeat.com{shoe.find('a').get('href')}")
     print("Scraped all shoe urls... found", len(urls), "pages")
 
 
     cache = load_cache()
 
-    for url in urls:
-        if url not in cache:  # scrape only if not already saved
-            cache[url] = parse_runrepeat_shoe(url)
-            print(f"Scraped {url}")
+    for name, url in zip(names, urls):
+        if name not in cache:  # scrape only if not already saved
+            cache[name] = parse_runrepeat_shoe(name, url)
+            print(f"Scraped {name}: {url}")
         else:
-            print(f"Loaded from cache: {url}")
+            print(f"Loaded from cache: {name} {url}")
 
     save_cache(cache)
 
