@@ -25,7 +25,7 @@ const config: Config = {
         "neon-pink": "#EC4899",
       },
       fontFamily: {
-        sans: ['"Rubik"', "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ['"Lexend"', "ui-sans-serif", "system-ui", "sans-serif"],
       },
     },
   },

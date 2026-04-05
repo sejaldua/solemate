@@ -112,7 +112,7 @@ export default function SpiderChart({ data, features, size = 300 }: SpiderChartP
               dominantBaseline="middle"
               className="fill-text-secondary"
               fontSize={9}
-              fontFamily="Rubik"
+              fontFamily="Lexend"
             >
               {FEATURE_LABELS[f]}
             </text>

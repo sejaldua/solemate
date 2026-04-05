@@ -159,6 +159,11 @@ export default function ComparePage() {
                           </>
                         )}
                       </div>
+                      {(details[shoe.id]?.pros || shoe.pros)?.length > 0 && (
+                        <p className="text-[11px] text-text-muted mt-2 leading-relaxed line-clamp-2">
+                          {(details[shoe.id]?.pros || shoe.pros)[0]}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </motion.div>
@@ -270,26 +275,6 @@ export default function ComparePage() {
                 })}
               </Panel>
 
-              <Panel title="Verdict Summary">
-                {compareShoes.map((shoe, i) => (
-                  <div key={shoe.id} className="mb-3 last:mb-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <div
-                        className="w-2 h-2 rounded-full"
-                        style={{ background: COMPARE_COLORS[i % COMPARE_COLORS.length] }}
-                      />
-                      <span className="text-xs text-text-primary font-medium">
-                        {shoe.model.split(" ").slice(-2).join(" ")}
-                      </span>
-                    </div>
-                    {(details[shoe.id]?.pros || shoe.pros)?.length > 0 && (
-                      <p className="text-[11px] text-text-muted leading-relaxed ml-4">
-                        {(details[shoe.id]?.pros || shoe.pros)[0]}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </Panel>
             </div>
           </div>
         </motion.div>

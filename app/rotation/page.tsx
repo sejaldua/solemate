@@ -25,6 +25,16 @@ function RotationSlot({
       <div className="absolute top-3 right-3 text-xs text-neon-blue bg-neon-blue/10 px-2 py-1 rounded">
         {slotLabel}
       </div>
+      {shoe.image_url && (
+        <div className="flex justify-center mb-4">
+          <img
+            src={shoe.image_url}
+            alt={shoe.model}
+            className="w-28 h-28 rounded-xl object-cover bg-bg"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
+        </div>
+      )}
       <div className="text-xs text-text-muted mb-1">{role.label}</div>
       <h3 className="text-lg text-text-primary font-medium">{shoe.model}</h3>
       <div className="text-sm text-text-secondary mb-3">{shoe.brand}</div>

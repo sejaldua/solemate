@@ -175,7 +175,7 @@ export default function ShoeMap({
               textAnchor="middle"
               fill="#6B7280"
               fontSize={8}
-              fontFamily="Rubik"
+              fontFamily="Lexend"
               fontWeight={500}
             >
               {clusters.labels[clusterId]}
@@ -246,7 +246,7 @@ export default function ShoeMap({
               textAnchor="middle"
               fill="#2563EB"
               fontSize="8"
-              fontFamily="Rubik"
+              fontFamily="Lexend"
               fontWeight="600"
             >
               YOU
