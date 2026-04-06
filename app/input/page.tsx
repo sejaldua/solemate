@@ -204,6 +204,38 @@ export default function InputPage() {
                 <span className="text-xs text-neon-orange">Speed</span>
               </div>
             </Panel>
+
+            <Panel title="Budget">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-2xl text-text-primary">
+                  {profile.budget != null ? `$${profile.budget}` : "No limit"}
+                </span>
+                {profile.budget != null && (
+                  <button
+                    onClick={() => setProfile({ budget: null })}
+                    className="text-xs text-text-muted hover:text-text-secondary transition-colors"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <input
+                type="range"
+                min={50}
+                max={300}
+                step={10}
+                value={profile.budget ?? 300}
+                onChange={(e) => setProfile({ budget: Number(e.target.value) })}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-text-muted mt-1">
+                <span>$50</span>
+                <span>$300+</span>
+              </div>
+              <p className="text-[10px] text-text-muted mt-2">
+                Shoes over budget are penalized, not hidden — a great match slightly over budget still appears.
+              </p>
+            </Panel>
           </motion.div>
 
           {/* Right: Live Insights */}

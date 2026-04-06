@@ -10,13 +10,16 @@ import {
 import {
   classifyArchetype,
   computePreferenceVector,
+  computeBlendedWeights,
   getInsights,
+  FeatureWeights,
 } from "@/utils/archetype";
 
 interface RunnerProfileStore {
   profile: RunnerProfile;
   archetype: Archetype;
   preferenceVector: FeatureVector;
+  blendedWeights: FeatureWeights;
   insights: { label: string; value: string; warning?: boolean }[];
   currentShoe: Shoe | null;
   currentShoeFeedback: string;
@@ -32,13 +35,15 @@ const DEFAULT_PROFILE: RunnerProfile = {
   terrain: "road",
   injuries: [],
   comfortSpeed: 50,
+  budget: null,
 };
 
 function computeDerived(profile: RunnerProfile) {
   const archetype = classifyArchetype(profile);
   const preferenceVector = computePreferenceVector(profile);
+  const blendedWeights = computeBlendedWeights(profile);
   const insights = getInsights(profile, archetype, preferenceVector);
-  return { archetype, preferenceVector, insights };
+  return { archetype, preferenceVector, blendedWeights, insights };
 }
 
 const initialDerived = computeDerived(DEFAULT_PROFILE);

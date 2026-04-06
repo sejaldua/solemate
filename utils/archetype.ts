@@ -1,6 +1,6 @@
-import { Archetype, FeatureVector, FeatureKey, RunnerProfile } from "@/types";
+import { Archetype, FeatureVector, FeatureKey, FEATURE_KEYS, RunnerProfile } from "@/types";
 
-type FeatureWeights = Record<FeatureKey, number>;
+export type FeatureWeights = Record<FeatureKey, number>;
 
 const ARCHETYPE_WEIGHTS: Record<Archetype, FeatureWeights> = {
   cushion_chaser: {
@@ -55,30 +55,90 @@ const ARCHETYPE_WEIGHTS: Record<Archetype, FeatureWeights> = {
   },
 };
 
-export function classifyArchetype(profile: RunnerProfile): Archetype {
-  const { weeklyMileage, pace, terrain, injuries, comfortSpeed } = profile;
-
-  // Trail dominates if selected
-  if (terrain === "trail") return "trail_explorer";
-
-  // Injury guardian if any injuries flagged
-  if (injuries.length > 0 && !injuries.includes("none")) return "injury_guardian";
-
-  // Speed demon: fast pace + speed preference
-  if (pace < 7.5 && comfortSpeed > 60) return "speed_demon";
-
-  // Cushion chaser: high mileage + comfort preference
-  if (weeklyMileage > 40 && comfortSpeed < 40) return "cushion_chaser";
-
-  // Speed-leaning
-  if (comfortSpeed > 65) return "speed_demon";
-
-  // Comfort-leaning
-  if (comfortSpeed < 35) return "cushion_chaser";
-
-  return "all_rounder";
+function sigmoid(x: number): number {
+  return 1 / (1 + Math.exp(-x));
 }
 
+/**
+ * Compute continuous affinity to each archetype.
+ * Returns a Record<Archetype, number> that sums to 1.
+ *
+ * Instead of hard if/else boundaries, each archetype gets a [0, 1] affinity
+ * based on sigmoid-smoothed profile signals. A runner at pace 7.4 gets ~55%
+ * speed demon affinity instead of flipping from 0% to 100% at the threshold.
+ */
+export function computeArchetypeAffinities(profile: RunnerProfile): Record<Archetype, number> {
+  const { weeklyMileage, pace, terrain, injuries, comfortSpeed } = profile;
+
+  const hasInjuries = injuries.length > 0 && !injuries.includes("none");
+
+  const affinities: Record<Archetype, number> = {
+    // High mileage + comfort preference → cushion chaser
+    cushion_chaser: sigmoid((weeklyMileage - 40) / 15) * sigmoid((50 - comfortSpeed) / 20),
+    // Fast pace + speed preference → speed demon
+    speed_demon: sigmoid((7.5 - pace) / 1.5) * sigmoid((comfortSpeed - 50) / 20),
+    // Injuries → injury guardian
+    injury_guardian: hasInjuries ? 0.8 : 0.0,
+    // Trail terrain → trail explorer
+    trail_explorer: terrain === "trail" ? 1.0 : terrain === "mixed" ? 0.3 : 0.0,
+    // Baseline — everyone has a little all-rounder
+    all_rounder: 0.2,
+  };
+
+  // Normalize to sum to 1
+  const total = Object.values(affinities).reduce((a, b) => a + b, 0);
+  if (total > 0) {
+    for (const key of Object.keys(affinities) as Archetype[]) {
+      affinities[key] /= total;
+    }
+  }
+
+  return affinities;
+}
+
+/**
+ * Blend archetype weight vectors according to continuous affinities.
+ * This is the scoring function's actual weight vector.
+ */
+export function computeBlendedWeights(profile: RunnerProfile): FeatureWeights {
+  const affinities = computeArchetypeAffinities(profile);
+
+  const blended: FeatureWeights = {
+    weight: 0, stack_height: 0, drop: 0, midsole_softness: 0,
+    flexibility: 0, width: 0, energy_return: 0, traction: 0,
+  };
+
+  for (const arch of Object.keys(affinities) as Archetype[]) {
+    const w = ARCHETYPE_WEIGHTS[arch];
+    const a = affinities[arch];
+    for (const f of FEATURE_KEYS) {
+      blended[f] += w[f] * a;
+    }
+  }
+
+  return blended;
+}
+
+/**
+ * Classify the dominant archetype (for display purposes).
+ * The actual scoring uses the blended weights, but the UI shows a label.
+ */
+export function classifyArchetype(profile: RunnerProfile): Archetype {
+  const affinities = computeArchetypeAffinities(profile);
+  let best: Archetype = "all_rounder";
+  let bestVal = -1;
+  for (const [arch, val] of Object.entries(affinities) as [Archetype, number][]) {
+    if (val > bestVal) {
+      bestVal = val;
+      best = arch;
+    }
+  }
+  return best;
+}
+
+/**
+ * Get raw archetype weights (for reference / evaluation).
+ */
 export function getArchetypeWeights(archetype: Archetype): FeatureWeights {
   return ARCHETYPE_WEIGHTS[archetype];
 }
@@ -86,15 +146,13 @@ export function getArchetypeWeights(archetype: Archetype): FeatureWeights {
 export function computePreferenceVector(profile: RunnerProfile): FeatureVector {
   const { weeklyMileage, pace, comfortSpeed, injuries } = profile;
 
-  // Normalize inputs to [0, 1]
   const mileageNorm = Math.min(weeklyMileage / 100, 1);
-  const paceNorm = 1 - (pace - 5) / 8; // faster pace = higher value
-  const speedPref = comfortSpeed / 100; // 0 = comfort, 1 = speed
+  const paceNorm = 1 - (pace - 5) / 8;
+  const speedPref = comfortSpeed / 100;
 
-  // Compute preference for each feature
-  const weight = 0.3 + speedPref * 0.5; // speed lovers want light (high = light after inversion)
+  const weight = 0.3 + speedPref * 0.5;
   const stack_height = 0.5 + mileageNorm * 0.3 - speedPref * 0.2;
-  const drop = 0.5; // neutral default
+  const drop = 0.5;
   const midsole_softness = 0.5 + (1 - speedPref) * 0.3 + mileageNorm * 0.1;
   const flexibility = 0.3 + speedPref * 0.4;
   const width = 0.5;
@@ -102,17 +160,10 @@ export function computePreferenceVector(profile: RunnerProfile): FeatureVector {
   const traction = profile.terrain === "trail" ? 0.9 : 0.3;
 
   const prefs: FeatureVector = {
-    weight,
-    stack_height,
-    drop,
-    midsole_softness,
-    flexibility,
-    width,
-    energy_return,
-    traction,
+    weight, stack_height, drop, midsole_softness,
+    flexibility, width, energy_return, traction,
   };
 
-  // Injury adjustments
   if (injuries.includes("plantar_fasciitis")) {
     prefs.stack_height = Math.min(prefs.stack_height + 0.2, 1);
     prefs.midsole_softness = Math.min(prefs.midsole_softness + 0.15, 1);
@@ -130,7 +181,6 @@ export function computePreferenceVector(profile: RunnerProfile): FeatureVector {
     prefs.midsole_softness = Math.min(prefs.midsole_softness + 0.1, 1);
   }
 
-  // Clamp all to [0, 1]
   for (const key of Object.keys(prefs) as (keyof FeatureVector)[]) {
     prefs[key] = Math.max(0, Math.min(1, prefs[key]));
   }
@@ -141,24 +191,19 @@ export function computePreferenceVector(profile: RunnerProfile): FeatureVector {
 export function getInsights(profile: RunnerProfile, archetype: Archetype, prefs: FeatureVector) {
   const insights: { label: string; value: string; warning?: boolean }[] = [];
 
-  // Optimal stack range (denormalize: typical range 20-45mm)
   const stackMin = Math.round(20 + prefs.stack_height * 20);
   const stackMax = Math.min(stackMin + 8, 45);
   insights.push({ label: "Optimal Stack", value: `${stackMin}–${stackMax}mm` });
 
-  // Weight tolerance
   const maxWeight = Math.round(350 - prefs.weight * 150);
   insights.push({ label: "Max Weight", value: `${maxWeight}g` });
 
-  // Drop preference
   const dropPref = prefs.drop > 0.6 ? "High (8–12mm)" : prefs.drop > 0.4 ? "Medium (4–8mm)" : "Low (0–4mm)";
   insights.push({ label: "Drop Preference", value: dropPref });
 
-  // Cushioning level
   const cushion = prefs.midsole_softness > 0.7 ? "Maximum" : prefs.midsole_softness > 0.4 ? "Moderate" : "Minimal";
   insights.push({ label: "Cushioning", value: cushion });
 
-  // Injury warnings
   if (profile.injuries.includes("plantar_fasciitis")) {
     insights.push({ label: "Injury Flag", value: "Avoid minimal cushioning", warning: true });
   }
@@ -167,6 +212,10 @@ export function getInsights(profile: RunnerProfile, archetype: Archetype, prefs:
   }
   if (profile.injuries.includes("knee")) {
     insights.push({ label: "Injury Flag", value: "Extra stability recommended", warning: true });
+  }
+
+  if (profile.budget != null) {
+    insights.push({ label: "Budget", value: `≤ $${profile.budget}` });
   }
 
   return insights;

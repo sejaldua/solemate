@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Shoe, EmbeddingData, ClusterData, Meta } from "@/types";
+import { Shoe, EmbeddingData, ClusterData, Meta, SimilarityGraph } from "@/types";
 import { BASE_PATH } from "@/utils/constants";
 
 interface ShoeData {
@@ -9,6 +9,7 @@ interface ShoeData {
   embeddings: EmbeddingData | null;
   clusters: ClusterData | null;
   meta: Meta | null;
+  graph: SimilarityGraph | null;
   loading: boolean;
   error: string | null;
 }
@@ -22,6 +23,7 @@ export function useShoeData(): ShoeData {
       embeddings: null,
       clusters: null,
       meta: null,
+      graph: null,
       loading: true,
       error: null,
     }
@@ -35,11 +37,12 @@ export function useShoeData(): ShoeData {
 
     async function load() {
       try {
-        const [shoesRes, embRes, clustRes, metaRes] = await Promise.all([
+        const [shoesRes, embRes, clustRes, metaRes, graphRes] = await Promise.all([
           fetch(`${BASE_PATH}/data/shoes.json`),
           fetch(`${BASE_PATH}/data/embeddings.json`),
           fetch(`${BASE_PATH}/data/clusters.json`),
           fetch(`${BASE_PATH}/data/meta.json`),
+          fetch(`${BASE_PATH}/data/graph.json`),
         ]);
 
         const shoes: Shoe[] = (await shoesRes.json()).map((s: Shoe) => ({
@@ -50,8 +53,9 @@ export function useShoeData(): ShoeData {
         const embeddings = await embRes.json();
         const clusters = await clustRes.json();
         const meta = await metaRes.json();
+        const graph = await graphRes.json();
 
-        cachedData = { shoes, embeddings, clusters, meta, loading: false, error: null };
+        cachedData = { shoes, embeddings, clusters, meta, graph, loading: false, error: null };
         setData(cachedData);
       } catch (err) {
         setData((prev) => ({

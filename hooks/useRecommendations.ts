@@ -11,12 +11,12 @@ export function useRecommendations(): {
   loading: boolean;
 } {
   const { shoes, loading } = useShoeData();
-  const { preferenceVector, archetype, profile } = useRunnerProfile();
+  const { preferenceVector, blendedWeights, profile } = useRunnerProfile();
 
   const recommendations = useMemo(() => {
     if (shoes.length === 0) return [];
-    return rankShoes(shoes, preferenceVector, archetype, profile.terrain);
-  }, [shoes, preferenceVector, archetype, profile.terrain]);
+    return rankShoes(shoes, preferenceVector, blendedWeights, profile.terrain, profile.budget);
+  }, [shoes, preferenceVector, blendedWeights, profile.terrain, profile.budget]);
 
   return { recommendations, loading };
 }

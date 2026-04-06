@@ -3,6 +3,14 @@ SoleMate Data Pipeline
 Transforms raw RunRepeat scraped data into normalized, embedded, clustered JSON files
 for the frontend recommendation engine.
 
+Upgrades over v1:
+  - QuantileTransformer (uniform) instead of MinMaxScaler
+  - Polynomial interaction features for UMAP input (8D → 36D)
+  - HDBSCAN for natural cluster discovery (optional, falls back to silhouette search)
+  - Silhouette analysis to validate cluster count
+  - Gaussian Mixture Model for soft cluster membership probabilities
+  - k-NN similarity graph export
+
 Usage:
     cd pipeline
     python prepare_data.py
@@ -13,9 +21,19 @@ import re
 import os
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import QuantileTransformer, PolynomialFeatures
 from sklearn.cluster import KMeans
+from sklearn.mixture import GaussianMixture
+from sklearn.metrics import silhouette_score
+from sklearn.neighbors import NearestNeighbors
 from umap import UMAP
+
+try:
+    from hdbscan import HDBSCAN
+
+    HAS_HDBSCAN = True
+except ImportError:
+    HAS_HDBSCAN = False
 
 # ──────────────────────────────────────────────
 # Config
@@ -23,10 +41,14 @@ from umap import UMAP
 
 RAW_FILE = "../shoes.json"
 OUTPUT_DIR = "../public/data"
-N_CLUSTERS = 6
 UMAP_NEIGHBORS = 15
 UMAP_MIN_DIST = 0.1
 RANDOM_STATE = 42
+SIMILARITY_K = 6  # neighbors per shoe in similarity graph
+HDBSCAN_MIN_CLUSTER = 15
+HDBSCAN_MIN_SAMPLES = 5
+SILHOUETTE_SEARCH_MIN = 3
+SILHOUETTE_SEARCH_MAX = 12
 
 FEATURE_COLS = [
     "weight",
@@ -52,15 +74,12 @@ def parse_weight_grams(val: str) -> float | None:
     """Parse weight like '8.8 oz (249g)' → 249.0"""
     if not val:
         return None
-    # Try grams in parentheses first
     m = re.search(r"\((\d+\.?\d*)g\)", val)
     if m:
         return float(m.group(1))
-    # Try oz and convert
     m = re.search(r"([\d.]+)\s*oz", val)
     if m:
         return float(m.group(1)) * 28.3495
-    # Try bare grams
     m = re.search(r"([\d.]+)\s*g", val)
     if m:
         return float(m.group(1))
@@ -167,7 +186,6 @@ def derive_tags(shoe: dict) -> dict:
     if terrain not in ("road", "trail"):
         terrain = "road"
 
-    # Derive stability from pronation/arch_support
     pronation = (shoe.get("pronation") or "").lower()
     arch = (shoe.get("arch_support") or "").lower()
     stability = "neutral"
@@ -203,25 +221,21 @@ def derive_category(shoe: dict) -> str:
 
 def label_clusters(centroids: np.ndarray, feature_names: list[str]) -> dict[str, str]:
     """Assign unique human-readable labels based on each cluster's most distinctive trait."""
-    # For each cluster, find which feature deviates most from the global mean (0.5)
-    # Then assign a descriptive name based on that standout quality
     candidate_labels = [
-        # (condition_fn, label) — checked in priority order
-        lambda p: p["traction"] > 0.6 and p["width"] > 0.5,  "Trail Grip Specialists",
-        lambda p: p["weight"] > 0.7 and p["energy_return"] > 0.55,  "Lightweight Racers",
-        lambda p: p["stack_height"] > 0.7 and p["midsole_softness"] > 0.6,  "Max Cushion",
-        lambda p: p["energy_return"] > 0.6 and p["flexibility"] > 0.5,  "Energy Returners",
-        lambda p: p["midsole_softness"] > 0.6 and p["stack_height"] < 0.5,  "Plush Low-Profile",
-        lambda p: p["weight"] > 0.55 and p["flexibility"] > 0.55,  "Speed Trainers",
-        lambda p: p["drop"] > 0.6 and p["midsole_softness"] > 0.5,  "High-Drop Cushioned",
-        lambda p: p["width"] > 0.6,  "Wide-Fit Workhorses",
-        lambda p: p["stack_height"] > 0.55 and p["midsole_softness"] > 0.45,  "Cushioned Daily Trainers",
-        lambda p: p["flexibility"] > 0.5 and p["weight"] > 0.45,  "Responsive Tempo",
-        lambda p: p["drop"] < 0.35,  "Low-Drop Natural",
-        lambda p: True,  "Versatile All-Rounders",
+        lambda p: p["traction"] > 0.6 and p["width"] > 0.5, "Trail Grip Specialists",
+        lambda p: p["weight"] > 0.7 and p["energy_return"] > 0.55, "Lightweight Racers",
+        lambda p: p["stack_height"] > 0.7 and p["midsole_softness"] > 0.6, "Max Cushion",
+        lambda p: p["energy_return"] > 0.6 and p["flexibility"] > 0.5, "Energy Returners",
+        lambda p: p["midsole_softness"] > 0.6 and p["stack_height"] < 0.5, "Plush Low-Profile",
+        lambda p: p["weight"] > 0.55 and p["flexibility"] > 0.55, "Speed Trainers",
+        lambda p: p["drop"] > 0.6 and p["midsole_softness"] > 0.5, "High-Drop Cushioned",
+        lambda p: p["width"] > 0.6, "Wide-Fit Workhorses",
+        lambda p: p["stack_height"] > 0.55 and p["midsole_softness"] > 0.45, "Cushioned Daily Trainers",
+        lambda p: p["flexibility"] > 0.5 and p["weight"] > 0.45, "Responsive Tempo",
+        lambda p: p["drop"] < 0.35, "Low-Drop Natural",
+        lambda p: True, "Versatile All-Rounders",
     ]
 
-    # Pair conditions with labels
     rules = []
     for i in range(0, len(candidate_labels), 2):
         rules.append((candidate_labels[i], candidate_labels[i + 1]))
@@ -238,7 +252,6 @@ def label_clusters(centroids: np.ndarray, feature_names: list[str]) -> dict[str,
                 assigned = True
                 break
         if not assigned:
-            # Fallback: name by strongest feature
             best_feat = max(feature_names, key=lambda f: abs(profile[f] - 0.5))
             fallback = f"{best_feat.replace('_', ' ').title()} Focused"
             labels[str(i)] = fallback
@@ -252,12 +265,17 @@ def label_clusters(centroids: np.ndarray, feature_names: list[str]) -> dict[str,
 
 
 def main():
-    print("> Loading raw shoe data...")
+    print("=" * 60)
+    print("SoleMate Data Pipeline v2")
+    print("=" * 60)
+
+    # ── Load ──
+    print("\n> Loading raw shoe data...")
     with open(RAW_FILE, "r") as f:
         raw = json.load(f)
     print(f"  Loaded {len(raw)} shoes")
 
-    # Extract features and filter
+    # ── Extract features ──
     print("> Extracting features...")
     shoes = []
     for name, shoe in raw.items():
@@ -281,11 +299,10 @@ def main():
                 "url": shoe.get("url", ""),
             }
         )
-
     print(f"  {len(shoes)} shoes with sufficient lab data")
 
-    # Build feature matrix
-    print("> Normalizing features...")
+    # ── Build feature matrix ──
+    print("> Building feature matrix...")
     feature_matrix_raw = []
     for shoe in shoes:
         row = []
@@ -320,22 +337,40 @@ def main():
             "unit": units.get(col, ""),
         }
 
-    # Min-max normalize
-    scaler = MinMaxScaler()
+    # ── UPGRADE 1: QuantileTransformer ──
+    # Forces uniform distribution across [0, 1] regardless of original shape.
+    # A 0.1 difference now means the same percentile gap on every feature axis.
+    print("> Normalizing features (QuantileTransformer, uniform)...")
+    scaler = QuantileTransformer(
+        output_distribution="uniform", random_state=RANDOM_STATE
+    )
     normalized = scaler.fit_transform(df_features.values)
     df_norm = pd.DataFrame(normalized, columns=FEATURE_COLS)
 
-    # Invert features where lower = better
+    # Invert features where lower raw value = "more" of the quality
     for col in INVERT_FEATURES:
         df_norm[col] = 1.0 - df_norm[col]
 
     # Attach normalized features to shoes
     for i, shoe in enumerate(shoes):
-        shoe["features"] = {col: round(float(df_norm.iloc[i][col]), 4) for col in FEATURE_COLS}
+        shoe["features"] = {
+            col: round(float(df_norm.iloc[i][col]), 4) for col in FEATURE_COLS
+        }
         del shoe["raw_features"]
 
-    # Generate UMAP embeddings
-    print("> Computing UMAP embeddings...")
+    # ── UPGRADE 10: Polynomial interaction features for UMAP ──
+    # 8 base features → 36D (8 originals + 28 pairwise interactions)
+    # Captures non-linear relationships (heavy+soft = recovery, light+stiff = racer)
+    print("> Computing polynomial interaction features for UMAP...")
+    poly = PolynomialFeatures(degree=2, interaction_only=True, include_bias=False)
+    features_expanded = poly.fit_transform(df_norm.values)
+    print(
+        f"  Expanded {len(FEATURE_COLS)} features → {features_expanded.shape[1]}D "
+        f"(+{features_expanded.shape[1] - len(FEATURE_COLS)} pairwise interactions)"
+    )
+
+    # ── UMAP on expanded features ──
+    print("> Computing UMAP embeddings (on interaction features)...")
     reducer = UMAP(
         n_components=2,
         n_neighbors=UMAP_NEIGHBORS,
@@ -343,31 +378,109 @@ def main():
         random_state=RANDOM_STATE,
         metric="euclidean",
     )
-    embeddings_2d = reducer.fit_transform(df_norm.values)
+    embeddings_2d = reducer.fit_transform(features_expanded)
 
     coordinates = {}
     for i, shoe in enumerate(shoes):
-        coordinates[shoe["id"]] = [round(float(embeddings_2d[i, 0]), 4), round(float(embeddings_2d[i, 1]), 4)]
+        coordinates[shoe["id"]] = [
+            round(float(embeddings_2d[i, 0]), 4),
+            round(float(embeddings_2d[i, 1]), 4),
+        ]
 
-    # Cluster
-    print(f"> Clustering into {N_CLUSTERS} groups...")
-    kmeans = KMeans(n_clusters=N_CLUSTERS, random_state=RANDOM_STATE, n_init=10)
-    cluster_labels = kmeans.fit_predict(df_norm.values)
+    # ── UPGRADE 9: HDBSCAN for natural cluster discovery ──
+    n_natural = 6  # fallback
+    if HAS_HDBSCAN:
+        print("> Discovering natural cluster structure (HDBSCAN)...")
+        hdb = HDBSCAN(
+            min_cluster_size=HDBSCAN_MIN_CLUSTER,
+            min_samples=HDBSCAN_MIN_SAMPLES,
+            metric="euclidean",
+        )
+        hdb_labels = hdb.fit_predict(df_norm.values)
+        n_natural = len(set(hdb_labels)) - (1 if -1 in hdb_labels else 0)
+        n_noise = int((hdb_labels == -1).sum())
+        print(f"  HDBSCAN found {n_natural} natural clusters, {n_noise} noise points")
+    else:
+        print(
+            "> HDBSCAN not installed (pip install hdbscan), "
+            "defaulting to silhouette-only search"
+        )
 
-    # Project centroids into embedding space (use nearest shoe to each centroid)
+    # ── UPGRADE 3: Silhouette validation ──
+    # Search around HDBSCAN's estimate to find the best k
+    print("> Validating cluster count with silhouette analysis...")
+    search_lo = max(SILHOUETTE_SEARCH_MIN, n_natural - 2)
+    search_hi = min(SILHOUETTE_SEARCH_MAX, n_natural + 4)
+    sil_scores = []
+    for k in range(search_lo, search_hi + 1):
+        km = KMeans(n_clusters=k, n_init=10, random_state=RANDOM_STATE)
+        labs = km.fit_predict(df_norm.values)
+        sil = silhouette_score(df_norm.values, labs)
+        sil_scores.append((k, round(float(sil), 4)))
+        print(f"  k={k}: silhouette={sil:.4f}")
+
+    best_k, best_sil = max(sil_scores, key=lambda x: x[1])
+    print(f"  → Best k={best_k} (silhouette={best_sil})")
+
+    N_CLUSTERS = best_k
+
+    # ── UPGRADE 6: Gaussian Mixture Model for soft cluster membership ──
+    # GMM gives P(cluster | shoe) instead of hard assignments.
+    # "This shoe is 65% Max Cushion, 25% Daily Trainer" > a single label.
+    print(f"> Fitting Gaussian Mixture Model (k={N_CLUSTERS})...")
+    gmm = GaussianMixture(
+        n_components=N_CLUSTERS,
+        covariance_type="full",
+        n_init=5,
+        random_state=RANDOM_STATE,
+    )
+    gmm.fit(df_norm.values)
+    cluster_labels = gmm.predict(df_norm.values)
+    cluster_probs = gmm.predict_proba(df_norm.values)
+
+    # GMM component means serve as interpretable centroids for labeling
+    gmm_centers = gmm.means_
+
+    # Project cluster centers into 2D embedding space
     centroid_coords = {}
     for c in range(N_CLUSTERS):
         mask = cluster_labels == c
+        if mask.sum() == 0:
+            continue
         cluster_embeddings = embeddings_2d[mask]
         center = cluster_embeddings.mean(axis=0)
-        centroid_coords[str(c)] = [round(float(center[0]), 4), round(float(center[1]), 4)]
+        centroid_coords[str(c)] = [
+            round(float(center[0]), 4),
+            round(float(center[1]), 4),
+        ]
 
     assignments = {}
+    probabilities = {}
     for i, shoe in enumerate(shoes):
         assignments[shoe["id"]] = int(cluster_labels[i])
+        probabilities[shoe["id"]] = [round(float(p), 4) for p in cluster_probs[i]]
 
-    # Label clusters
-    cluster_label_names = label_clusters(kmeans.cluster_centers_, FEATURE_COLS)
+    # Label clusters using GMM component means
+    cluster_label_names = label_clusters(gmm_centers, FEATURE_COLS)
+
+    # ── UPGRADE 8: k-NN similarity graph ──
+    print(f"> Building similarity graph (k={SIMILARITY_K})...")
+    nn = NearestNeighbors(n_neighbors=SIMILARITY_K + 1, metric="euclidean")
+    nn.fit(df_norm.values)
+    nn_distances, nn_indices = nn.kneighbors()
+
+    similarity_graph = {}
+    for i, shoe in enumerate(shoes):
+        neighbors = []
+        for j in range(1, SIMILARITY_K + 1):  # skip self at index 0
+            neighbor_shoe = shoes[nn_indices[i][j]]
+            neighbors.append(
+                {
+                    "id": neighbor_shoe["id"],
+                    "distance": round(float(nn_distances[i][j]), 4),
+                }
+            )
+        similarity_graph[shoe["id"]] = neighbors
 
     # Compute embedding bounds
     x_vals = [c[0] for c in coordinates.values()]
@@ -408,7 +521,7 @@ def main():
     shoes_path = os.path.join(OUTPUT_DIR, "shoes.json")
     with open(shoes_path, "w") as f:
         json.dump(shoes_out, f)
-    print(f"  Wrote {len(shoes_out)} shoes → {shoes_path}")
+    print(f"\n  Wrote {len(shoes_out)} shoes → {shoes_path}")
 
     # shoes-detail.json (verdict/pros/cons — lazy-loaded)
     detail_path = os.path.join(OUTPUT_DIR, "shoes-detail.json")
@@ -417,17 +530,26 @@ def main():
     print(f"  Wrote details → {detail_path}")
 
     # embeddings.json
-    embeddings_out = {"method": "umap", "coordinates": coordinates}
+    embeddings_out = {
+        "method": "umap",
+        "input_dim": int(features_expanded.shape[1]),
+        "coordinates": coordinates,
+    }
     emb_path = os.path.join(OUTPUT_DIR, "embeddings.json")
     with open(emb_path, "w") as f:
         json.dump(embeddings_out, f)
     print(f"  Wrote embeddings → {emb_path}")
 
-    # clusters.json
+    # clusters.json — now includes GMM probabilities
     clusters_out = {
         "k": N_CLUSTERS,
+        "method": "gmm",
+        "silhouette_score": best_sil,
+        "silhouette_scores": sil_scores,
+        "hdbscan_natural_k": n_natural if HAS_HDBSCAN else None,
         "labels": cluster_label_names,
         "assignments": assignments,
+        "probabilities": probabilities,
         "centroids": centroid_coords,
     }
     clusters_path = os.path.join(OUTPUT_DIR, "clusters.json")
@@ -435,24 +557,55 @@ def main():
         json.dump(clusters_out, f)
     print(f"  Wrote clusters → {clusters_path}")
 
-    # meta.json
+    # graph.json — k-NN similarity graph
+    graph_path = os.path.join(OUTPUT_DIR, "graph.json")
+    with open(graph_path, "w") as f:
+        json.dump(similarity_graph, f)
+    print(f"  Wrote similarity graph → {graph_path}")
+
+    # meta.json — enriched with pipeline metadata
     meta_out = {
         "shoe_count": len(shoes_out),
         "feature_names": FEATURE_COLS,
         "feature_ranges": feature_ranges,
         "embedding_bounds": embedding_bounds,
+        "clustering": {
+            "method": "gmm",
+            "k": N_CLUSTERS,
+            "silhouette_score": best_sil,
+            "hdbscan_natural_k": n_natural if HAS_HDBSCAN else None,
+        },
+        "embedding": {
+            "method": "umap",
+            "input_dim": int(features_expanded.shape[1]),
+            "interaction_features": True,
+        },
+        "normalization": {
+            "method": "quantile_uniform",
+            "inverted_features": INVERT_FEATURES,
+        },
     }
     meta_path = os.path.join(OUTPUT_DIR, "meta.json")
     with open(meta_path, "w") as f:
         json.dump(meta_out, f)
     print(f"  Wrote meta → {meta_path}")
 
-    print(f"\n> Pipeline complete. {len(shoes_out)} shoes processed.")
-
-    # Summary
+    # ── Summary ──
+    print(f"\n{'=' * 60}")
+    print(f"Pipeline complete. {len(shoes_out)} shoes processed.")
+    print(f"{'=' * 60}")
+    print(f"  Normalization: QuantileTransformer (uniform)")
+    print(f"  UMAP input: {features_expanded.shape[1]}D (8 base + {features_expanded.shape[1]-8} interactions)")
+    if HAS_HDBSCAN:
+        print(f"  HDBSCAN natural clusters: {n_natural}")
+    print(f"  Final k: {N_CLUSTERS} (silhouette={best_sil})")
+    print(f"  Clustering: GMM (full covariance)")
+    print(f"  Similarity graph: {SIMILARITY_K}-NN")
+    print()
     for c in range(N_CLUSTERS):
         count = sum(1 for v in assignments.values() if v == c)
-        print(f"  Cluster {c} ({cluster_label_names[str(c)]}): {count} shoes")
+        label = cluster_label_names.get(str(c), "?")
+        print(f"  Cluster {c} ({label}): {count} shoes")
 
 
 if __name__ == "__main__":

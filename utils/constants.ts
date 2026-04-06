@@ -5,6 +5,12 @@ export const CLUSTER_COLORS = [
   "#7C3AED", // purple
   "#EC4899", // pink
   "#EF4444", // red
+  "#0891B2", // cyan
+  "#EA580C", // orange
+  "#4F46E5", // indigo
+  "#059669", // emerald
+  "#D946EF", // fuchsia
+  "#DC2626", // rose
 ];
 
 export const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "/solemate";

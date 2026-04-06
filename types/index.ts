@@ -76,6 +76,7 @@ export interface RunnerProfile {
   terrain: "road" | "trail" | "mixed";
   injuries: string[];
   comfortSpeed: number; // 0 = max comfort, 100 = max speed
+  budget: number | null; // max price in USD, null = no limit
 }
 
 export type Archetype =
@@ -113,14 +114,34 @@ export interface EmbeddingData {
 
 export interface ClusterData {
   k: number;
+  method: string;
+  silhouette_score: number;
   labels: Record<string, string>;
   assignments: Record<string, number>;
+  probabilities: Record<string, number[]>;
   centroids: Record<string, [number, number]>;
 }
+
+export type SimilarityGraph = Record<string, { id: string; distance: number }[]>;
 
 export interface Meta {
   shoe_count: number;
   feature_names: string[];
   feature_ranges: Record<string, { min: number; max: number; unit: string }>;
   embedding_bounds: { x: [number, number]; y: [number, number] };
+  clustering?: {
+    method: string;
+    k: number;
+    silhouette_score: number;
+    hdbscan_natural_k: number | null;
+  };
+  embedding?: {
+    method: string;
+    input_dim: number;
+    interaction_features: boolean;
+  };
+  normalization?: {
+    method: string;
+    inverted_features: string[];
+  };
 }

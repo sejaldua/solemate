@@ -4,8 +4,9 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { useRecommendations } from "@/hooks/useRecommendations";
+import { useShoeData } from "@/hooks/useShoeData";
 import { useShoeDetails } from "@/hooks/useShoeDetails";
-import { ScoredShoe } from "@/types";
+import { Shoe, ScoredShoe } from "@/types";
 import Panel from "@/components/Panel";
 import ConfidenceBar from "@/components/ConfidenceBar";
 
@@ -163,9 +164,64 @@ function WhyThisWorks({ shoe }: { shoe: ScoredShoe }) {
   );
 }
 
+function SimilarShoes({
+  shoe,
+  graph,
+  shoes,
+  onSelect,
+}: {
+  shoe: ScoredShoe;
+  graph: Record<string, { id: string; distance: number }[]> | null;
+  shoes: Shoe[];
+  onSelect: (id: string) => void;
+}) {
+  if (!graph || !graph[shoe.id]) return null;
+
+  const neighbors = graph[shoe.id];
+  const shoeMap = new Map(shoes.map((s) => [s.id, s]));
+
+  return (
+    <Panel title="Similar Shoes">
+      <p className="text-[10px] text-text-muted mb-3">
+        Nearest neighbors in feature space (biomechanically similar)
+      </p>
+      <div className="space-y-2">
+        {neighbors.map((n) => {
+          const s = shoeMap.get(n.id);
+          if (!s) return null;
+          const similarity = Math.max(0, Math.round((1 - n.distance / 2) * 100));
+          return (
+            <button
+              key={n.id}
+              onClick={() => onSelect(n.id)}
+              className="w-full flex items-center gap-2.5 p-2 rounded border border-border/50
+                         hover:border-text-muted bg-bg-panel transition-colors text-left"
+            >
+              {s.image_url && (
+                <img
+                  src={s.image_url}
+                  alt=""
+                  className="w-8 h-8 rounded object-cover bg-bg flex-shrink-0"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-primary truncate">{s.model}</div>
+                <div className="text-[10px] text-text-muted">{s.brand}</div>
+              </div>
+              <div className="text-[10px] text-text-muted tabular-nums">{similarity}%</div>
+            </button>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
 export default function RecommendationsPage() {
   const router = useRouter();
   const { recommendations, loading } = useRecommendations();
+  const { shoes, graph } = useShoeData();
   const { details } = useShoeDetails();
   const [selectedIndex, setSelectedIndex] = useState(0);
 
@@ -222,9 +278,18 @@ export default function RecommendationsPage() {
               <TopPickCard shoe={selected} rank={selectedIndex + 1} />
             </div>
 
-            {/* Right: Why this works */}
-            <div className="lg:col-span-4">
+            {/* Right: Why this works + Similar shoes */}
+            <div className="lg:col-span-4 space-y-5">
               <WhyThisWorks shoe={selected} />
+              <SimilarShoes
+                shoe={selected}
+                graph={graph}
+                shoes={shoes}
+                onSelect={(id) => {
+                  const idx = recommendations.findIndex((s) => s.id === id);
+                  if (idx >= 0) setSelectedIndex(idx);
+                }}
+              />
             </div>
           </div>
         </motion.div>

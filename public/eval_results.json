@@ -1,0 +1,116 @@
+{
+  "leave_one_out": {
+    "all_rounder": {
+      "mean_rank": 0.0,
+      "median_rank": 0,
+      "hit_rate@1": 1.0,
+      "hit_rate@3": 1.0,
+      "hit_rate@5": 1.0,
+      "hit_rate@10": 1.0,
+      "worst_rank": 0
+    },
+    "by_archetype": {
+      "cushion_chaser": {
+        "mean_rank": 0.0,
+        "median_rank": 0,
+        "hit_rate@1": 1.0,
+        "hit_rate@3": 1.0,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0,
+        "worst_rank": 0
+      },
+      "speed_demon": {
+        "mean_rank": 0.0,
+        "median_rank": 0,
+        "hit_rate@1": 1.0,
+        "hit_rate@3": 1.0,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0,
+        "worst_rank": 0
+      },
+      "injury_guardian": {
+        "mean_rank": 0.0,
+        "median_rank": 0,
+        "hit_rate@1": 1.0,
+        "hit_rate@3": 1.0,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0,
+        "worst_rank": 0
+      },
+      "trail_explorer": {
+        "mean_rank": 0.0,
+        "median_rank": 0,
+        "hit_rate@1": 1.0,
+        "hit_rate@3": 1.0,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0,
+        "worst_rank": 0
+      },
+      "all_rounder": {
+        "mean_rank": 0.0,
+        "median_rank": 0,
+        "hit_rate@1": 1.0,
+        "hit_rate@3": 1.0,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0,
+        "worst_rank": 0
+      }
+    }
+  },
+  "synthetic_ground_truth": {
+    "speed": {
+      "n_relevant": 118,
+      "ndcg@10": 0.1357,
+      "ndcg@20": 0.1964,
+      "precision@10": 0.2,
+      "precision@20": 0.25,
+      "diversity@10": 0.6694,
+      "coverage@20": 0.6667
+    },
+    "cushion": {
+      "n_relevant": 259,
+      "ndcg@10": 0.776,
+      "ndcg@20": 0.8207,
+      "precision@10": 0.8,
+      "precision@20": 0.85,
+      "diversity@10": 0.7347,
+      "coverage@20": 0.6667
+    },
+    "long_run": {
+      "n_relevant": 146,
+      "ndcg@10": 0.2115,
+      "ndcg@20": 0.2719,
+      "precision@10": 0.3,
+      "precision@20": 0.35,
+      "diversity@10": 0.6992,
+      "coverage@20": 0.6667
+    },
+    "daily": {
+      "n_relevant": 172,
+      "ndcg@10": 0.5463,
+      "ndcg@20": 0.5994,
+      "precision@10": 0.7,
+      "precision@20": 0.7,
+      "diversity@10": 0.7042,
+      "coverage@20": 0.6667
+    },
+    "trail": {
+      "n_relevant": 150,
+      "ndcg@10": 0.6403,
+      "ndcg@20": 0.6284,
+      "precision@10": 0.6,
+      "precision@20": 0.6,
+      "diversity@10": 0.7473,
+      "coverage@20": 0.6667
+    },
+    "stability": {
+      "n_relevant": 142,
+      "ndcg@10": 0.8604,
+      "ndcg@20": 0.764,
+      "precision@10": 0.8,
+      "precision@20": 0.7,
+      "diversity@10": 0.7199,
+      "coverage@20": 0.6667
+    }
+  }
+}

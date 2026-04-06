@@ -9,12 +9,42 @@ import { Shoe, EmbeddingData, ClusterData, Meta, FeatureVector, FEATURE_LABELS, 
 import { CLUSTER_COLORS } from "@/utils/constants";
 import { projectUserVector } from "@/utils/projector";
 
+// Deterministic brand color palette (visually distinct, works on light bg)
+const BRAND_COLORS: Record<string, string> = {
+  Nike: "#F97316",
+  Adidas: "#2563EB",
+  "New Balance": "#DC2626",
+  ASICS: "#0891B2",
+  Hoka: "#7C3AED",
+  Brooks: "#16A34A",
+  Saucony: "#DB2777",
+  On: "#0D9488",
+  Puma: "#EA580C",
+  Mizuno: "#4F46E5",
+  Reebok: "#B91C1C",
+  Altra: "#059669",
+  Salomon: "#1D4ED8",
+  Merrell: "#92400E",
+  "Under Armour": "#9333EA",
+};
+const FALLBACK_BRAND_COLOR = "#6B7280";
+
+function getBrandColor(brand: string): string {
+  return BRAND_COLORS[brand] || FALLBACK_BRAND_COLOR;
+}
+
+export type ColorMode = "cluster" | "brand";
+
+export { getBrandColor, BRAND_COLORS };
+
 interface ShoeMapProps {
   shoes: Shoe[];
   embeddings: EmbeddingData;
   clusters: ClusterData;
   meta: Meta;
   preferenceVector: FeatureVector;
+  colorMode?: ColorMode;
+  selectedBrands?: Set<string>;
   onShoeClick?: (shoe: Shoe) => void;
 }
 
@@ -24,6 +54,8 @@ export default function ShoeMap({
   clusters,
   meta,
   preferenceVector,
+  colorMode = "cluster",
+  selectedBrands = new Set(),
   onShoeClick,
 }: ShoeMapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -31,6 +63,12 @@ export default function ShoeMap({
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [transform, setTransform] = useState(zoomIdentity);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+
+  // Whether a shoe passes the brand filter
+  const isBrandVisible = useCallback(
+    (shoe: Shoe) => selectedBrands.size === 0 || selectedBrands.has(shoe.brand),
+    [selectedBrands]
+  );
 
   // Compute user position
   const userPos = useMemo(
@@ -122,6 +160,18 @@ export default function ShoeMap({
     setHoveredShoe(null);
   }, []);
 
+  // Get dot color based on current mode
+  const getDotColor = useCallback(
+    (shoe: Shoe) => {
+      if (colorMode === "brand") {
+        return getBrandColor(shoe.brand);
+      }
+      const clusterId = clusters.assignments[shoe.id];
+      return CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
+    },
+    [colorMode, clusters]
+  );
+
   return (
     <div className="relative w-full h-full">
       <svg
@@ -166,25 +216,27 @@ export default function ShoeMap({
             strokeDasharray="4 4"
           />
 
-          {/* Cluster centroid labels */}
-          {Object.entries(clusters.centroids).map(([clusterId, [cx, cy]]) => (
-            <text
-              key={`label-${clusterId}`}
-              x={xScale(cx)}
-              y={yScale(cy) - 18}
-              textAnchor="middle"
-              fill="#6B7280"
-              fontSize={8}
-              fontFamily="Lexend"
-              fontWeight={500}
-            >
-              {clusters.labels[clusterId]}
-            </text>
-          ))}
+          {/* Cluster centroid labels (only in cluster mode) */}
+          {colorMode === "cluster" &&
+            Object.entries(clusters.centroids).map(([clusterId, [cx, cy]]) => (
+              <text
+                key={`label-${clusterId}`}
+                x={xScale(cx)}
+                y={yScale(cy) - 18}
+                textAnchor="middle"
+                fill="#6B7280"
+                fontSize={8}
+                fontFamily="Lexend"
+                fontWeight={500}
+              >
+                {clusters.labels[clusterId]}
+              </text>
+            ))}
 
           {/* Connection lines from user to nearby shoes */}
           {shoes.map((shoe) => {
             if (!nearbyShoeIds.has(shoe.id)) return null;
+            if (!isBrandVisible(shoe)) return null;
             const coord = embeddings.coordinates[shoe.id];
             if (!coord) return null;
             return (
@@ -205,21 +257,21 @@ export default function ShoeMap({
           {shoes.map((shoe) => {
             const coord = embeddings.coordinates[shoe.id];
             if (!coord) return null;
-            const clusterId = clusters.assignments[shoe.id];
-            const color = CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
+            const color = getDotColor(shoe);
             const isHovered = hoveredShoe?.id === shoe.id;
             const isNearby = nearbyShoeIds.has(shoe.id);
+            const visible = isBrandVisible(shoe);
 
             return (
               <circle
                 key={shoe.id}
                 cx={xScale(coord[0])}
                 cy={yScale(coord[1])}
-                r={isHovered ? 7 : isNearby ? 4.5 : 3}
+                r={isHovered ? 7 : isNearby && visible ? 4.5 : 3}
                 fill={color}
-                fillOpacity={isNearby ? 0.9 : 0.35}
-                stroke={isHovered ? "#fff" : isNearby ? color : "none"}
-                strokeWidth={isHovered ? 2 : isNearby ? 1 : 0}
+                fillOpacity={!visible ? 0.06 : isNearby ? 0.9 : 0.45}
+                stroke={isHovered ? "#fff" : isNearby && visible ? color : "none"}
+                strokeWidth={isHovered ? 2 : isNearby && visible ? 1 : 0}
                 filter={isHovered ? "url(#glow-soft)" : undefined}
                 className="cursor-pointer transition-all duration-200"
                 onMouseEnter={(e) => handleMouseEnter(shoe, e)}
@@ -283,15 +335,49 @@ export default function ShoeMap({
                 <div className="text-xs text-text-secondary">{hoveredShoe.brand}</div>
               </div>
             </div>
-            <div
-              className="text-xs mt-1.5 px-1.5 py-0.5 rounded inline-block"
-              style={{
-                color: CLUSTER_COLORS[clusters.assignments[hoveredShoe.id] % CLUSTER_COLORS.length],
-                background: CLUSTER_COLORS[clusters.assignments[hoveredShoe.id] % CLUSTER_COLORS.length] + "15",
-              }}
-            >
-              {clusters.labels[String(clusters.assignments[hoveredShoe.id])]}
-            </div>
+            {/* Primary + secondary cluster badges */}
+            {(() => {
+              const probs = clusters.probabilities?.[hoveredShoe.id];
+              const primaryId = clusters.assignments[hoveredShoe.id];
+              const primaryColor = CLUSTER_COLORS[primaryId % CLUSTER_COLORS.length];
+
+              let secondaryId: number | null = null;
+              let secondaryProb = 0;
+              if (probs) {
+                probs.forEach((p, i) => {
+                  if (i !== primaryId && p > secondaryProb) {
+                    secondaryProb = p;
+                    secondaryId = i;
+                  }
+                });
+              }
+
+              return (
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  <div
+                    className="text-xs px-1.5 py-0.5 rounded inline-flex items-center gap-1"
+                    style={{ color: primaryColor, background: primaryColor + "15" }}
+                  >
+                    {clusters.labels[String(primaryId)]}
+                    {probs && (
+                      <span className="opacity-60">{Math.round(probs[primaryId] * 100)}%</span>
+                    )}
+                  </div>
+                  {secondaryId !== null && secondaryProb > 0.15 && (
+                    <div
+                      className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 opacity-70"
+                      style={{
+                        color: CLUSTER_COLORS[secondaryId % CLUSTER_COLORS.length],
+                        background: CLUSTER_COLORS[secondaryId % CLUSTER_COLORS.length] + "10",
+                      }}
+                    >
+                      {clusters.labels[String(secondaryId)]}
+                      <span className="opacity-60">{Math.round(secondaryProb * 100)}%</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <div className="mt-2 space-y-1">
               {(["weight", "stack_height", "midsole_softness", "energy_return"] as FeatureKey[]).map((f) => (
                 <div key={f} className="flex items-center gap-2 text-xs">
@@ -301,36 +387,22 @@ export default function ShoeMap({
                       className="h-full rounded-full"
                       style={{
                         width: `${hoveredShoe.features[f] * 100}%`,
-                        background: CLUSTER_COLORS[clusters.assignments[hoveredShoe.id] % CLUSTER_COLORS.length],
+                        background: getDotColor(hoveredShoe),
                       }}
                     />
                   </div>
                 </div>
               ))}
             </div>
+            {hoveredShoe.price != null && (
+              <div className="mt-1.5 text-[10px] text-text-muted">${hoveredShoe.price}</div>
+            )}
             {nearbyShoeIds.has(hoveredShoe.id) && (
-              <div className="mt-2 text-[10px] text-neon-blue">In your recommendation zone</div>
+              <div className="mt-1 text-[10px] text-neon-blue">In your recommendation zone</div>
             )}
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Legend */}
-      <div className="absolute bottom-4 left-4 bg-bg-panel/90 border border-border rounded p-3 text-xs space-y-1.5">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-neon-blue" />
-          <span className="text-neon-blue text-[10px]">Your position</span>
-        </div>
-        {Object.entries(clusters.labels).map(([id, label]) => (
-          <div key={id} className="flex items-center gap-2">
-            <div
-              className="w-2.5 h-2.5 rounded-full"
-              style={{ background: CLUSTER_COLORS[Number(id) % CLUSTER_COLORS.length] }}
-            />
-            <span className="text-text-muted">{label}</span>
-          </div>
-        ))}
-      </div>
 
       {/* Nearby count indicator */}
       <div className="absolute top-4 right-4 bg-bg-panel/90 border border-border rounded px-3 py-2 text-xs">
